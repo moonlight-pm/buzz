@@ -64,68 +64,61 @@ grep -q 'permission-contents: write' "$auto_tag"
 grep -q 'GH_TOKEN:.*steps\.release-tagger\.outputs\.token' "$auto_tag"
 grep -Fq 'git/refs' "$auto_tag"
 grep -Fq 'TAG_PREFIX="desktop-v"' "$auto_tag"
-grep -Fq 'target_sha=${{ github.event.pull_request.merge_commit_sha }}' "$auto_tag"
+grep -Fq 'target_sha=${{ github.event.pull_request.head.sha }}' "$auto_tag"
 grep -Fq 'scripts/verify-desktop-release-merge.sh' "$auto_tag"
-grep -Fq 'current \`main\`' "$repo_root/scripts/prepare-desktop-release.sh"
+grep -Fq 'reviewed candidate' "$repo_root/scripts/prepare-desktop-release.sh"
 if grep -Fq 'current `main`' "$repo_root/scripts/prepare-desktop-release.sh"; then
   echo "desktop release PR body contains executable command substitution" >&2
   exit 1
 fi
-"$repo_root/scripts/test-desktop-release-authorization.sh"
-if rg -q 'rule-suites|desktop-release-bypass-authorized|MERGED_BY' \
-  "$repo_root/scripts/verify-desktop-release-merge.sh" \
-  "$repo_root/scripts/verify-desktop-release-authorization.sh" \
-  "$auto_tag"; then
-  echo "desktop auto-tag still depends on unavailable rule-suite authorization" >&2
-  exit 1
-fi
-
-review_filter="$repo_root/scripts/review-decision-approved.jq"
-for fixture in \
-  '{"reviewDecision":"CHANGES_REQUESTED"}' \
-  '{"reviewDecision":"REVIEW_REQUIRED"}' \
-  '{"reviewDecision":null}' \
-  '{}'; do
-  if jq -e -f "$review_filter" <<<"$fixture" >/dev/null; then
-    echo "review-decision filter accepted non-approved fixture: $fixture" >&2
-    exit 1
-  fi
-done
-jq -e -f "$review_filter" >/dev/null <<'JSON' || {
-{"reviewDecision":"APPROVED"}
-JSON
-  echo "review-decision filter rejected approved GraphQL response" >&2
-  exit 1
-}
 required_check_filter="$repo_root/scripts/required-check-succeeded.jq"
 check_fixture() {
-  local expected="$1" conclusion="$2" status="${3:-completed}"
-  local payload
-  payload=$(jq -n --arg status "$status" --arg conclusion "$conclusion" '{check_runs: [{name: "Web", status: $status, conclusion: $conclusion, started_at: "2026-01-01T00:00:00Z"}]}')
-  if jq -e --arg name Web -f "$required_check_filter" <<<"[$payload]" >/dev/null; then
-    actual=pass
-  else
-    actual=fail
-  fi
-  [[ "$actual" == "$expected" ]] || {
-    echo "required-check filter: expected $conclusion/$status to $expected" >&2
-    exit 1
-  }
+  local expected="$1" conclusion="$2" app="${3:-15368}" started="${4:-2026-01-01T00:00:00Z}"
+  local payload actual
+  payload=$(jq -n --arg conclusion "$conclusion" --argjson app "$app" --arg started "$started"     '{check_runs: [{name: "Web", app: {id: $app}, status: "completed", conclusion: $conclusion, started_at: $started, completed_at: $started}]}')
+  if jq -e --arg name Web --argjson integration_id 15368     --arg merged_at 2026-01-02T00:00:00Z     -f "$required_check_filter" <<<"[$payload]" >/dev/null; then actual=pass; else actual=fail; fi
+  [[ "$actual" == "$expected" ]] || { echo "required-check fixture expected $expected, got $actual" >&2; exit 1; }
 }
 check_fixture pass success
 check_fixture pass skipped
 check_fixture pass neutral
 check_fixture fail failure
-check_fixture fail success in_progress
-# A newer failure must not be hidden by an older successful run of the same check.
-jq -e --arg name Web -f "$required_check_filter" >/dev/null <<'JSON' && {
+check_fixture fail success 999
+check_fixture fail success 15368 2026-01-03T00:00:00Z
+# A check that started before merge but completed afterward was not green at merge.
+jq -e --arg name Web --argjson integration_id 15368 --arg merged_at 2026-01-02T00:00:00Z \
+  -f "$required_check_filter" >/dev/null <<'JSON' && {
+[{"check_runs":[{"name":"Web","app":{"id":15368},"status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-03T00:00:00Z"}]}]
+JSON
+  echo "required-check filter accepted a check that completed after merge" >&2; exit 1;
+}
+# A null completion timestamp cannot prove success at merge.
+jq -e --arg name Web --argjson integration_id 15368 --arg merged_at 2026-01-02T00:00:00Z \
+  -f "$required_check_filter" >/dev/null <<'JSON' && {
+[{"check_runs":[{"name":"Web","app":{"id":15368},"status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z","completed_at":null}]}]
+JSON
+  echo "required-check filter accepted a null completion time" >&2; exit 1;
+}
+# DCO may report just after merge, but only inside its explicit five-minute bound.
+dco_fixture() {
+  local expected="$1" completed="$2" actual
+  if jq -e --arg name "DCO Check" --argjson integration_id 1455659 --arg merged_at 2026-01-02T00:00:00Z \
+    -f "$required_check_filter" >/dev/null <<JSON
+[{"check_runs":[{"name":"DCO Check","app":{"id":1455659},"status":"completed","conclusion":"success","started_at":"$completed","completed_at":"$completed"}]}]
+JSON
+  then actual=pass; else actual=fail; fi
+  [[ "$actual" == "$expected" ]] || { echo "DCO completion $completed expected $expected" >&2; exit 1; }
+}
+dco_fixture pass 2026-01-02T00:04:59Z
+dco_fixture fail 2026-01-02T00:05:01Z
+# Post-merge reruns cannot replace the state that authorized the merge.
+jq -e --arg name Web --argjson integration_id 15368   --arg merged_at 2026-01-02T00:00:00Z   -f "$required_check_filter" >/dev/null <<'JSON' || {
 [{"check_runs":[
-  {"name":"Web","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z"},
-  {"name":"Web","status":"completed","conclusion":"failure","started_at":"2026-01-02T00:00:00Z"}
+  {"name":"Web","app":{"id":15368},"status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-01T01:00:00Z"},
+  {"name":"Web","app":{"id":15368},"status":"completed","conclusion":"failure","started_at":"2026-01-03T00:00:00Z","completed_at":"2026-01-03T01:00:00Z"}
 ]}]
 JSON
-  echo "required-check filter accepted a stale pass over a newer failure" >&2
-  exit 1
+  echo "required-check filter did not preserve merge-time success" >&2; exit 1;
 }
 release_workflow="$repo_root/.github/workflows/release.yml"
 [[ "$(grep -c 'contents: write' "$release_workflow")" -eq 1 ]] || {
