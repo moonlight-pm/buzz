@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+
+const FORMER_STARTERS = [
+  { name: "Fizz", personaId: "builtin:fizz", role: "lead" },
+  { name: "Honey", personaId: "builtin:honey", role: "teammate" },
+  { name: "Bumble", personaId: "builtin:bumble", role: "teammate" },
+];
 import {
   activateWelcomeTeamPersonasSequentially,
   buildWelcomeStarterCreateInput,
@@ -178,7 +184,7 @@ test("all Welcome starters use the onboarding runtime preference", async () => {
     command: "buzz-agent",
   };
 
-  for (const starter of WELCOME_TEAM_STARTERS) {
+  for (const starter of FORMER_STARTERS) {
     const input = await buildWelcomeStarterCreateInput(
       starter,
       {
@@ -291,15 +297,11 @@ test("existing Welcome starter needs no update when runtime already matches", ()
 
 test("welcome team starter definitions and role identities are stable", () => {
   assert.equal(WELCOME_TEAM_ID, "builtin-team:welcome");
-  assert.deepEqual(WELCOME_TEAM_STARTERS, [
-    { name: "Fizz", personaId: "builtin:fizz", role: "lead" },
-    { name: "Honey", personaId: "builtin:honey", role: "teammate" },
-    { name: "Bumble", personaId: "builtin:bumble", role: "teammate" },
-  ]);
+  assert.deepEqual(WELCOME_TEAM_STARTERS, []);
 });
 
 test("starter matching ignores user agents with a Welcome persona", () => {
-  const honey = WELCOME_TEAM_STARTERS[1];
+  const honey = FORMER_STARTERS[1];
   const userHoney = makeAgent({
     personaId: honey.personaId,
     teamId: null,
@@ -312,7 +314,7 @@ test("starter matching ignores user agents with a Welcome persona", () => {
 });
 
 test("starter matching uses persona identity rather than display name", () => {
-  const honey = WELCOME_TEAM_STARTERS[1];
+  const honey = FORMER_STARTERS[1];
   const renamedHoney = makeAgent({
     name: "Honey the Helper",
     personaId: honey.personaId,
@@ -330,7 +332,7 @@ test("starter matching uses persona identity rather than display name", () => {
 });
 
 test("starter matching is relay scoped and normalizes trailing slashes", () => {
-  const bumble = WELCOME_TEAM_STARTERS[2];
+  const bumble = FORMER_STARTERS[2];
   const otherRelay = makeAgent({
     personaId: bumble.personaId,
     relayUrl: RELAY_B,
@@ -353,7 +355,7 @@ test("starter matching is relay scoped and normalizes trailing slashes", () => {
 });
 
 test("starter matching prefers running, then deployed instances", () => {
-  const fizz = WELCOME_TEAM_STARTERS[0];
+  const fizz = FORMER_STARTERS[0];
   const stopped = makeAgent({ personaId: fizz.personaId });
   const deployed = makeAgent({
     personaId: fizz.personaId,

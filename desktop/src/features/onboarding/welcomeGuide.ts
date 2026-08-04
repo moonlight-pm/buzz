@@ -28,7 +28,7 @@ const LEGACY_WELCOME_GUIDE_AGENT_NAME = "Kit";
 export const LEGACY_WELCOME_GUIDE_SYSTEM_PROMPT =
   "You are Kit, Sprout's friendly welcome guide. Help new users understand the community, channels, messages, and agents. Keep introductions concise, practical, and warm.";
 export const WELCOME_GUIDE_INTRO_MESSAGE =
-  "Hi, I'm Fizz. Welcome to Buzz.\n\nI can help you get oriented, answer questions, and make the first few steps feel less mysterious.\n\nFeel free to ask me what else you can do in Buzz, or just talk through what you want to build.";
+  "Welcome to Buzz.\n\nCreate an agent when you want help getting oriented, answering questions, or working through something you are building.";
 
 export type WelcomeTeamRole = "lead" | "teammate";
 
@@ -38,14 +38,14 @@ export type WelcomeTeamStarterDefinition = Readonly<{
   role: WelcomeTeamRole;
 }>;
 
-/** Stable identities used to provision the Rust-seeded Welcome Team. */
-export const WELCOME_TEAM_STARTERS = [
-  { name: "Fizz", personaId: "builtin:fizz", role: "lead" },
-  { name: "Honey", personaId: "builtin:honey", role: "teammate" },
-  { name: "Bumble", personaId: "builtin:bumble", role: "teammate" },
-] as const satisfies readonly WelcomeTeamStarterDefinition[];
+/**
+ * Moonlight fork: no compiled-in Welcome Team starters. Keep the provisioning
+ * machinery (and legacy Fizz/Kit guide lookup) so older installs still work,
+ * but stock installs create zero welcome agents.
+ */
+export const WELCOME_TEAM_STARTERS = [] as const satisfies readonly WelcomeTeamStarterDefinition[];
 
-export type WelcomeTeamAgents = [ManagedAgent, ManagedAgent, ManagedAgent];
+export type WelcomeTeamAgents = ManagedAgent[];
 
 const welcomeTeamPromises = new Map<string, Promise<WelcomeTeamAgents>>();
 
@@ -269,6 +269,9 @@ async function provisionWelcomeTeam(
   channelId: string,
   relayUrl?: string | null,
 ): Promise<WelcomeTeamAgents> {
+  if (WELCOME_TEAM_STARTERS.length === 0) {
+    return [];
+  }
   const existingAgents = await listManagedAgents();
   await ensureWelcomeTeamPersonasActive();
   const [personas, runtimeCatalog, globalConfig] = await Promise.all([
@@ -314,26 +317,29 @@ async function provisionWelcomeTeam(
     const created = await createManagedAgent(desired);
     agents.push(created.agent);
   }
-  const [lead, honey, bumble] = agents;
-  if (!lead || !honey || !bumble) {
+  if (agents.length !== WELCOME_TEAM_STARTERS.length) {
     throw new Error("Welcome Team provisioning did not return every starter.");
   }
-  const welcomeAgents: WelcomeTeamAgents = [lead, honey, bumble];
-  const leadPubkey = lead.pubkey;
-  for (const index of [1, 2] as const) {
-    const teammate = welcomeAgents[index];
-    const alreadyAllowsLead =
-      teammate.respondTo === "allowlist" &&
-      teammate.respondToAllowlist.some(
-        (pubkey) => normalizePubkey(pubkey) === normalizePubkey(leadPubkey),
-      );
-    if (!alreadyAllowsLead) {
-      const updated = await updateManagedAgent({
-        pubkey: teammate.pubkey,
-        respondTo: "allowlist",
-        respondToAllowlist: [leadPubkey],
-      });
-      welcomeAgents[index] = updated.agent;
+  const welcomeAgents: WelcomeTeamAgents = agents;
+  const lead = welcomeAgents[0];
+  if (lead) {
+    const leadPubkey = lead.pubkey;
+    for (let index = 1; index < welcomeAgents.length; index += 1) {
+      const teammate = welcomeAgents[index];
+      if (!teammate) continue;
+      const alreadyAllowsLead =
+        teammate.respondTo === "allowlist" &&
+        teammate.respondToAllowlist.some(
+          (pubkey) => normalizePubkey(pubkey) === normalizePubkey(leadPubkey),
+        );
+      if (!alreadyAllowsLead) {
+        const updated = await updateManagedAgent({
+          pubkey: teammate.pubkey,
+          respondTo: "allowlist",
+          respondToAllowlist: [leadPubkey],
+        });
+        welcomeAgents[index] = updated.agent;
+      }
     }
   }
   await ensureWelcomeTeamMembership(channelId, welcomeAgents);

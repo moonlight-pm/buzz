@@ -132,10 +132,13 @@ function markerEvent(events: readonly RelayEvent[], marker: string) {
 export function resolveWelcomeAgentSet(
   agents: readonly ManagedAgent[],
 ): WelcomeAgentSet | null {
+  if (WELCOME_TEAM_STARTERS.length === 0) {
+    return null;
+  }
   const ordered = WELCOME_TEAM_STARTERS.map((starter) =>
     pickWelcomeTeamStarterAgentForRelay([...agents], starter),
   );
-  if (ordered.some((agent) => !agent)) return null;
+  if (ordered.length < 3 || ordered.some((agent) => !agent)) return null;
   return {
     lead: ordered[0] as ManagedAgent,
     teammates: [ordered[1] as ManagedAgent, ordered[2] as ManagedAgent],

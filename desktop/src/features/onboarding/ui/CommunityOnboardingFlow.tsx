@@ -184,13 +184,9 @@ export function CommunityOnboardingFlow({
     if (!isTeamIntroVisible) return;
     void listPersonas()
       .then((personas) =>
+        // Starter personas are no longer compiled in; leave empty for stock.
         setStarterPersonas(
-          ["Fizz", "Honey", "Bumble"].flatMap((name) => {
-            const persona = personas.find(
-              (candidate) => candidate.displayName === name,
-            );
-            return persona ? [persona] : [];
-          }),
+          personas.filter((persona) => persona.isBuiltIn && persona.isActive),
         ),
       )
       .catch(() => setStarterPersonas([]));
@@ -634,10 +630,10 @@ export function CommunityOnboardingFlow({
             </>
           ) : (
             <>
-              <h1 className="text-title font-normal">Meet your starter team</h1>
+              <h1 className="text-title font-normal">Your workspace is ready</h1>
               <p className="mx-auto mt-3 max-w-[400px] text-sm leading-6 text-foreground/80">
                 Buzz lets you bring multiple agents into the same workspace.
-                Your team will help you get started using Buzz.
+                Create agents when you want help getting started.
               </p>
               <div className="flex w-full flex-1 items-center justify-center py-10">
                 {starterPersonas.length > 0 ? (

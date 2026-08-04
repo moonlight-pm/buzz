@@ -319,51 +319,65 @@ fn migration_customized_fizz_is_demoted_to_user_team() {
 }
 
 #[test]
-fn welcome_team_is_seeded_and_idempotent() {
+fn welcome_team_is_not_seeded_on_empty_store() {
     let (records, changed) = merge_teams(Vec::new(), "2026-07-01T00:00:00Z");
 
-    assert!(changed);
-    assert_eq!(records.len(), 1);
-    let welcome = &records[0];
-    assert_eq!(welcome.id, "builtin-team:welcome");
-    assert_eq!(welcome.name, "Welcome Team");
-    assert_eq!(
-        welcome.description.as_deref(),
-        Some("A friendly starter trio ready to help you plan, create, and ship.")
-    );
-    assert_eq!(
-        welcome.persona_ids,
-        vec![
+    assert!(!changed);
+    assert!(records.is_empty());
+}
+
+#[test]
+fn pristine_welcome_team_is_purged_when_retired() {
+    let welcome = TeamRecord {
+        id: "builtin-team:welcome".to_string(),
+        name: "Welcome Team".to_string(),
+        description: Some(
+            "A friendly starter trio ready to help you plan, create, and ship.".to_string(),
+        ),
+        instructions: None,
+        persona_ids: vec![
             "builtin:fizz".to_string(),
             "builtin:honey".to_string(),
             "builtin:bumble".to_string(),
-        ]
-    );
-    assert!(welcome.is_builtin);
+        ],
+        is_builtin: true,
+        source_dir: None,
+        is_symlink: false,
+        symlink_target: None,
+        version: None,
+        created_at: "2026-07-01T00:00:00Z".to_string(),
+        updated_at: "2026-07-01T00:00:00Z".to_string(),
+    };
 
-    let expected = serde_json::to_value(&records).unwrap();
-    let (records_after_second_merge, changed) = merge_teams(records, "2026-07-02T00:00:00Z");
-    assert!(!changed);
-    assert_eq!(
-        serde_json::to_value(records_after_second_merge).unwrap(),
-        expected
+    let (records, changed) = merge_teams(vec![welcome], "2026-07-02T00:00:00Z");
+
+    assert!(changed);
+    assert!(
+        records.iter().all(|t| t.id != "builtin-team:welcome"),
+        "pristine retired welcome team must be purged"
     );
 }
 
 #[test]
-fn welcome_team_seed_does_not_overwrite_customization() {
-    let (mut records, _) = merge_teams(Vec::new(), "2026-07-01T00:00:00Z");
-    let welcome = records
-        .iter_mut()
-        .find(|team| team.id == "builtin-team:welcome")
-        .expect("welcome team should be seeded");
-    welcome.name = "My Welcome Team".to_string();
-    welcome.description = Some("My customized starter team.".to_string());
-    welcome.persona_ids = vec!["builtin:honey".to_string()];
+fn customized_welcome_team_is_demoted_not_purged() {
+    let welcome = TeamRecord {
+        id: "builtin-team:welcome".to_string(),
+        name: "My Welcome Team".to_string(),
+        description: Some("My customized starter team.".to_string()),
+        instructions: None,
+        persona_ids: vec!["builtin:honey".to_string()],
+        is_builtin: true,
+        source_dir: None,
+        is_symlink: false,
+        symlink_target: None,
+        version: None,
+        created_at: "2026-07-01T00:00:00Z".to_string(),
+        updated_at: "2026-07-01T00:00:00Z".to_string(),
+    };
 
-    let (records, changed) = merge_teams(records, "2026-07-02T00:00:00Z");
+    let (records, changed) = merge_teams(vec![welcome], "2026-07-02T00:00:00Z");
 
-    assert!(!changed);
+    assert!(changed);
     let welcome = records
         .iter()
         .find(|team| team.id == "builtin-team:welcome")
@@ -374,7 +388,7 @@ fn welcome_team_seed_does_not_overwrite_customization() {
         Some("My customized starter team.")
     );
     assert_eq!(welcome.persona_ids, vec!["builtin:honey".to_string()]);
-    assert!(welcome.is_builtin);
+    assert!(!welcome.is_builtin);
 }
 
 // ── load_teams_readonly tests ──────────────────────────────────────────
@@ -389,9 +403,8 @@ fn load_teams_readonly_absent_file_performs_no_write() {
 
     let records = load_teams_readonly(&path).unwrap();
 
-    // Returns the merged built-in list without persisting it.
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].id, "builtin-team:welcome");
+    // No built-in teams — empty merge result without persisting.
+    assert!(records.is_empty());
 
     // The file must still NOT exist — no write-on-load side effect.
     assert!(
