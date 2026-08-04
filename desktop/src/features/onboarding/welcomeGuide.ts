@@ -43,7 +43,7 @@ export type WelcomeTeamStarterDefinition = Readonly<{
  * machinery (and legacy Fizz/Kit guide lookup) so older installs still work,
  * but stock installs create zero welcome agents.
  */
-export const WELCOME_TEAM_STARTERS = [] as const satisfies readonly WelcomeTeamStarterDefinition[];
+export const WELCOME_TEAM_STARTERS: readonly WelcomeTeamStarterDefinition[] = [];
 
 export type WelcomeTeamAgents = ManagedAgent[];
 
