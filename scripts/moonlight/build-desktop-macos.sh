@@ -78,7 +78,8 @@ if [[ ! -f "$APPLE_API_KEY_PATH" ]]; then
   exit 1
 fi
 
-# Prefer key file path for Tauri signer; export body if only path is set
+# Prefer key body; fall back to path. Never leave both set — `tauri signer sign`
+# rejects --private-key used with --private-key-path (it maps both from env).
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && -f "${TAURI_SIGNING_PRIVATE_KEY_PATH}" ]]; then
   TAURI_SIGNING_PRIVATE_KEY="$(cat "$TAURI_SIGNING_PRIVATE_KEY_PATH")"
   export TAURI_SIGNING_PRIVATE_KEY
@@ -87,6 +88,9 @@ if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   echo "Missing TAURI_SIGNING_PRIVATE_KEY (or PATH) in $ENV_FILE" >&2
   exit 1
 fi
+# Body wins; drop path so CLI sees a single source.
+unset TAURI_SIGNING_PRIVATE_KEY_PATH
+export TAURI_SIGNING_PRIVATE_KEY
 
 # Guard: updater must point at Moonlight, never upstream Block
 case "$BUZZ_UPDATER_ENDPOINT" in
@@ -207,14 +211,27 @@ if ! xcrun stapler validate "$APP" >/dev/null 2>&1; then
   rm -f "$ZIP"
 fi
 
-# Updater archive (+ sign)
+# Updater archive (+ signature). Prefer artifacts already produced by `tauri build`
+# (createUpdaterArtifacts); only re-tar/sign if they are missing.
 ARCHIVE="$OUT/Buzz_${VERSION}_aarch64.app.tar.gz"
-(
-  cd "$(dirname "$APP")"
-  tar -czf "$ARCHIVE" Buzz.app
-)
-(cd desktop && pnpm tauri signer sign "$ARCHIVE")
 SIG="${ARCHIVE}.sig"
+TAURI_UPDATER_DIR="$ROOT/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+TAURI_UPDATER_TGZ="$TAURI_UPDATER_DIR/Buzz.app.tar.gz"
+TAURI_UPDATER_SIG="$TAURI_UPDATER_DIR/Buzz.app.tar.gz.sig"
+if [[ -f "$TAURI_UPDATER_TGZ" && -f "$TAURI_UPDATER_SIG" ]]; then
+  echo "Reusing tauri-built updater archive + signature"
+  cp -f "$TAURI_UPDATER_TGZ" "$ARCHIVE"
+  cp -f "$TAURI_UPDATER_SIG" "$SIG"
+else
+  echo "Creating updater archive and signing..."
+  (
+    cd "$(dirname "$APP")"
+    tar -czf "$ARCHIVE" Buzz.app
+  )
+  # Ensure only one key source for the CLI (env may have reintroduced PATH).
+  unset TAURI_SIGNING_PRIVATE_KEY_PATH
+  (cd desktop && pnpm tauri signer sign "$ARCHIVE")
+fi
 if [[ ! -f "$SIG" ]]; then
   echo "Missing updater signature: $SIG" >&2
   exit 1
