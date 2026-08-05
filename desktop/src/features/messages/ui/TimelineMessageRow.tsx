@@ -82,6 +82,8 @@ type MessageRowItemProps = {
   onReply?: (message: TimelineMessage) => void;
   onOpenThread?: (message: TimelineMessage) => void;
   onToggleReaction?: ToggleReaction;
+  /** Thread head currently open in the side panel, if any. */
+  openThreadHeadId?: string | null;
   profiles?: UserProfileLookup;
   searchActiveMessageId?: string | null;
   searchMatchingMessageIds?: Set<string>;
@@ -114,6 +116,7 @@ export function MessageRowItem({
   onReply,
   onOpenThread,
   onToggleReaction,
+  openThreadHeadId = null,
   profiles,
   searchActiveMessageId,
   searchMatchingMessageIds,
@@ -178,6 +181,7 @@ export function MessageRowItem({
         />
         <MessageThreadSummaryRow
           depth={message.depth}
+          isActive={openThreadHeadId === message.id}
           message={message}
           onOpenThread={onOpenThread}
           showDepthGuides={false}

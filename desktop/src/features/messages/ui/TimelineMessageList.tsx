@@ -88,6 +88,8 @@ type TimelineMessageListProps = {
     emoji: string,
     remove: boolean,
   ) => Promise<void>;
+  /** Thread head currently open in the side panel, if any. */
+  openThreadHeadId?: string | null;
   /** Map from lowercase pubkey → persona display name for bot members. */
   personaLookup?: Map<string, string>;
   profiles?: UserProfileLookup;
@@ -149,6 +151,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
   isSendingVideoReviewComment = false,
   onSendVideoReviewComment,
   onToggleReaction,
+  openThreadHeadId = null,
   profiles,
   ownerProfiles,
   searchActiveMessageId = null,
@@ -271,6 +274,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
               onReply={onReply}
               onOpenThread={onOpenThread}
               onToggleReaction={onToggleReaction}
+              openThreadHeadId={openThreadHeadId}
               profiles={profiles}
               searchActiveMessageId={searchActiveMessageId}
               searchMatchingMessageIds={searchMatchingMessageIds}
@@ -305,6 +309,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
       onReply,
       onOpenThread,
       onToggleReaction,
+      openThreadHeadId,
       profiles,
       ownerProfiles,
       searchActiveMessageId,
