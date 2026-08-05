@@ -1,0 +1,52 @@
+name: Moonlight Desktop Canary
+
+# Signed + notarized Apple Silicon DMG for smoke testing.
+# Artifact only — does not create a GitHub Release or bump the updater channel.
+#
+# Secrets: machine-local on the self-hosted runner
+#   (~/.buzz/.secrets/moonlight-desktop.env). Nothing from Block/upstream.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "web/**"
+      - "mobile/**"
+      - "charts/**"
+  workflow_dispatch:
+
+concurrency:
+  group: moonlight-desktop-canary
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Canary (macOS arm64)
+    if: github.repository == 'moonlight-pm/buzz'
+    runs-on: [self-hosted, macOS, ARM64, moonlight]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build signed desktop
+        run: |
+          set -euo pipefail
+          chmod +x scripts/moonlight/build-desktop-macos.sh
+          scripts/moonlight/build-desktop-macos.sh --out "$RUNNER_TEMP/moonlight-canary"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: moonlight-desktop-canary-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/moonlight-canary/*
+          if-no-files-found: error
+          retention-days: 14

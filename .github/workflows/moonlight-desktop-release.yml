@@ -1,0 +1,78 @@
+name: Moonlight Desktop Release
+
+# Cut a versioned Moonlight Desktop release + refresh rolling latest.json.
+# Trigger only via workflow_dispatch (or ask Pip: "cut a release 0.5.5").
+#
+# Secrets: machine-local on the self-hosted runner
+#   (~/.buzz/.secrets/moonlight-desktop.env). No Block/upstream keys or endpoints.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver to ship (X.Y.Z). Must be greater than last shipped for updater."
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build (default: main)"
+        required: false
+        default: main
+        type: string
+
+concurrency:
+  group: moonlight-desktop-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release ${{ inputs.version }}
+    if: github.repository == 'moonlight-pm/buzz'
+    runs-on: [self-hosted, macOS, ARM64, moonlight]
+    timeout-minutes: 90
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be pure semver X.Y.Z (got '$VERSION')"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Build signed desktop
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/moonlight/*.sh
+          scripts/moonlight/build-desktop-macos.sh \
+            --version "$VERSION" \
+            --out "$RUNNER_TEMP/moonlight-release"
+
+      - name: Publish release + updater channel
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/moonlight/publish-desktop-release.sh \
+            "$VERSION" \
+            "$RUNNER_TEMP/moonlight-release"
+
+      - name: Upload build artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: moonlight-desktop-release-${{ inputs.version }}
+          path: ${{ runner.temp }}/moonlight-release/*
+          if-no-files-found: error
+          retention-days: 30
