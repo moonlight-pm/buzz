@@ -1,11 +1,26 @@
 import { setLocalStorageItemWithRecovery } from "@/shared/lib/localStorageQuota";
 
+import {
+  isRestorableShellPath,
+  serializeSearchForDestination,
+} from "./communitySessionRestore";
+
 const COMMUNITY_DESTINATIONS_KEY = "buzz-community-destinations";
 let pendingCommunityRestoreId: string | null = null;
 
+/**
+ * Last place the user was inside a community.
+ *
+ * - `home` — Inbox / Home
+ * - `channel` — a channel, optionally with an open thread panel head id
+ * - `location` — other shell routes (agents, settings, workflows, …)
+ *
+ * Used for community-switch restore (pending flag) and cold-start restore.
+ */
 export type CommunityDestination =
   | { kind: "home" }
-  | { kind: "channel"; channelId: string };
+  | { kind: "channel"; channelId: string; threadRootId?: string }
+  | { kind: "location"; pathname: string; search?: string };
 
 type CommunityDestinations = Record<string, CommunityDestination>;
 
@@ -15,12 +30,101 @@ function isCommunityDestination(value: unknown): value is CommunityDestination {
   }
 
   const candidate = value as Record<string, unknown>;
-  return (
-    candidate.kind === "home" ||
-    (candidate.kind === "channel" &&
-      typeof candidate.channelId === "string" &&
-      candidate.channelId.length > 0)
-  );
+  if (candidate.kind === "home") {
+    return true;
+  }
+
+  if (candidate.kind === "channel") {
+    if (
+      typeof candidate.channelId !== "string" ||
+      candidate.channelId.length === 0
+    ) {
+      return false;
+    }
+    if (candidate.threadRootId === undefined) {
+      return true;
+    }
+    return (
+      typeof candidate.threadRootId === "string" &&
+      candidate.threadRootId.length > 0
+    );
+  }
+
+  if (candidate.kind === "location") {
+    if (
+      typeof candidate.pathname !== "string" ||
+      candidate.pathname.length === 0 ||
+      !candidate.pathname.startsWith("/")
+    ) {
+      return false;
+    }
+    if (candidate.search === undefined) {
+      return true;
+    }
+    return typeof candidate.search === "string";
+  }
+
+  return false;
+}
+
+function normalizeCommunityDestination(
+  destination: CommunityDestination,
+): CommunityDestination {
+  if (destination.kind === "home") {
+    return { kind: "home" };
+  }
+
+  if (destination.kind === "channel") {
+    if (
+      typeof destination.threadRootId === "string" &&
+      destination.threadRootId.length > 0
+    ) {
+      return {
+        kind: "channel",
+        channelId: destination.channelId,
+        threadRootId: destination.threadRootId,
+      };
+    }
+    return { kind: "channel", channelId: destination.channelId };
+  }
+
+  const search =
+    typeof destination.search === "string" && destination.search.length > 0
+      ? destination.search.startsWith("?")
+        ? destination.search.slice(1)
+        : destination.search
+      : undefined;
+  return search
+    ? { kind: "location", pathname: destination.pathname, search }
+    : { kind: "location", pathname: destination.pathname };
+}
+
+export function destinationsEqual(
+  a: CommunityDestination | null | undefined,
+  b: CommunityDestination | null | undefined,
+): boolean {
+  if (a == null || b == null) {
+    return a == null && b == null;
+  }
+  if (a.kind !== b.kind) {
+    return false;
+  }
+  if (a.kind === "home") {
+    return true;
+  }
+  if (a.kind === "channel" && b.kind === "channel") {
+    return (
+      a.channelId === b.channelId &&
+      (a.threadRootId ?? undefined) === (b.threadRootId ?? undefined)
+    );
+  }
+  if (a.kind === "location" && b.kind === "location") {
+    return (
+      a.pathname === b.pathname &&
+      (a.search ?? undefined) === (b.search ?? undefined)
+    );
+  }
+  return false;
 }
 
 function loadCommunityDestinations(storage: Storage): CommunityDestinations {
@@ -36,10 +140,14 @@ function loadCommunityDestinations(storage: Storage): CommunityDestinations {
     }
 
     return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, CommunityDestination] =>
+      Object.entries(parsed)
+        .filter((entry): entry is [string, CommunityDestination] =>
           isCommunityDestination(entry[1]),
-      ),
+        )
+        .map(([id, destination]) => [
+          id,
+          normalizeCommunityDestination(destination),
+        ]),
     );
   } catch {
     return {};
@@ -70,8 +178,13 @@ export function saveCommunityDestination(
   destination: CommunityDestination,
   storage: Storage = localStorage,
 ): void {
+  const next = normalizeCommunityDestination(destination);
+  const current = loadCommunityDestination(communityId, storage);
+  if (destinationsEqual(current, next)) {
+    return;
+  }
   saveCommunityDestinations(
-    { ...loadCommunityDestinations(storage), [communityId]: destination },
+    { ...loadCommunityDestinations(storage), [communityId]: next },
     storage,
   );
 }
@@ -108,4 +221,89 @@ export function consumePendingCommunityRestore(communityId: string): boolean {
   }
   pendingCommunityRestoreId = null;
   return true;
+}
+
+/**
+ * Build a destination snapshot from the current shell route.
+ * Settings and other non-channel views use `location` so they survive restart.
+ */
+export function communityDestinationFromRoute(options: {
+  pathname: string;
+  selectedView: string;
+  selectedChannelId: string | null;
+  threadRootId?: string | null;
+  /** TanStack location.search object or query string */
+  search?: unknown;
+}): CommunityDestination | null {
+  const pathname = options.pathname || "/";
+
+  if (pathname === "/settings" || pathname.startsWith("/settings/")) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname: "/settings", search }
+      : { kind: "location", pathname: "/settings" };
+  }
+
+  if (
+    options.selectedView === "home" &&
+    (pathname === "/" || pathname === "")
+  ) {
+    return { kind: "home" };
+  }
+
+  if (options.selectedView === "channel" && options.selectedChannelId) {
+    const threadRootId =
+      typeof options.threadRootId === "string" &&
+      options.threadRootId.length > 0
+        ? options.threadRootId
+        : undefined;
+    return threadRootId
+      ? {
+          kind: "channel",
+          channelId: options.selectedChannelId,
+          threadRootId,
+        }
+      : { kind: "channel", channelId: options.selectedChannelId };
+  }
+
+  // Agents, workflows, projects, pulse, new message — remember full path.
+  if (
+    options.selectedView !== "home" &&
+    options.selectedView !== "channel" &&
+    isRestorableShellPath(pathname)
+  ) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname, search }
+      : { kind: "location", pathname };
+  }
+
+  // Forum post under channel: /channels/:id/posts/:postId
+  if (pathname.startsWith("/channels/") && pathname.includes("/posts/")) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname, search }
+      : { kind: "location", pathname };
+  }
+
+  return null;
+}
+
+export function threadRootIdFromLocationSearch(
+  search: unknown,
+): string | undefined {
+  if (!search || typeof search !== "object") {
+    return undefined;
+  }
+  const record = search as Record<string, unknown>;
+  const thread =
+    typeof record.thread === "string" && record.thread.length > 0
+      ? record.thread
+      : undefined;
+  const threadRootId =
+    typeof record.threadRootId === "string" && record.threadRootId.length > 0
+      ? record.threadRootId
+      : undefined;
+  // Panel open state uses `thread`; deep-links may use `threadRootId`.
+  return thread ?? threadRootId;
 }

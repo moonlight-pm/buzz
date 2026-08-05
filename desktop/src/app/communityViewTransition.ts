@@ -9,8 +9,16 @@ export function completeCommunityViewTransition(): void {
 export function replaceCommunityDestinationRoute(
   channelId: string,
   history: { replace: (href: string) => void },
+  options?: { threadRootId?: string },
 ): void {
-  history.replace(`/channels/${encodeURIComponent(channelId)}`);
+  const path = `/channels/${encodeURIComponent(channelId)}`;
+  const threadRootId = options?.threadRootId;
+  if (typeof threadRootId === "string" && threadRootId.length > 0) {
+    // Channel panel open state is the `thread` search param (see useChannelPanelHistoryState).
+    history.replace(`${path}?thread=${encodeURIComponent(threadRootId)}`);
+    return;
+  }
+  history.replace(path);
 }
 
 export async function runCommunityViewTransition(
