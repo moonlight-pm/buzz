@@ -1,5 +1,10 @@
 import { setLocalStorageItemWithRecovery } from "@/shared/lib/localStorageQuota";
 
+import {
+  isRestorableShellPath,
+  serializeSearchForDestination,
+} from "./communitySessionRestore";
+
 const COMMUNITY_DESTINATIONS_KEY = "buzz-community-destinations";
 let pendingCommunityRestoreId: string | null = null;
 
@@ -8,12 +13,14 @@ let pendingCommunityRestoreId: string | null = null;
  *
  * - `home` — Inbox / Home
  * - `channel` — a channel, optionally with an open thread panel head id
+ * - `location` — other shell routes (agents, settings, workflows, …)
  *
  * Used for community-switch restore (pending flag) and cold-start restore.
  */
 export type CommunityDestination =
   | { kind: "home" }
-  | { kind: "channel"; channelId: string; threadRootId?: string };
+  | { kind: "channel"; channelId: string; threadRootId?: string }
+  | { kind: "location"; pathname: string; search?: string };
 
 type CommunityDestinations = Record<string, CommunityDestination>;
 
@@ -27,22 +34,37 @@ function isCommunityDestination(value: unknown): value is CommunityDestination {
     return true;
   }
 
-  if (
-    candidate.kind !== "channel" ||
-    typeof candidate.channelId !== "string" ||
-    candidate.channelId.length === 0
-  ) {
-    return false;
+  if (candidate.kind === "channel") {
+    if (
+      typeof candidate.channelId !== "string" ||
+      candidate.channelId.length === 0
+    ) {
+      return false;
+    }
+    if (candidate.threadRootId === undefined) {
+      return true;
+    }
+    return (
+      typeof candidate.threadRootId === "string" &&
+      candidate.threadRootId.length > 0
+    );
   }
 
-  if (candidate.threadRootId === undefined) {
-    return true;
+  if (candidate.kind === "location") {
+    if (
+      typeof candidate.pathname !== "string" ||
+      candidate.pathname.length === 0 ||
+      !candidate.pathname.startsWith("/")
+    ) {
+      return false;
+    }
+    if (candidate.search === undefined) {
+      return true;
+    }
+    return typeof candidate.search === "string";
   }
 
-  return (
-    typeof candidate.threadRootId === "string" &&
-    candidate.threadRootId.length > 0
-  );
+  return false;
 }
 
 function normalizeCommunityDestination(
@@ -52,18 +74,29 @@ function normalizeCommunityDestination(
     return { kind: "home" };
   }
 
-  if (
-    typeof destination.threadRootId === "string" &&
-    destination.threadRootId.length > 0
-  ) {
-    return {
-      kind: "channel",
-      channelId: destination.channelId,
-      threadRootId: destination.threadRootId,
-    };
+  if (destination.kind === "channel") {
+    if (
+      typeof destination.threadRootId === "string" &&
+      destination.threadRootId.length > 0
+    ) {
+      return {
+        kind: "channel",
+        channelId: destination.channelId,
+        threadRootId: destination.threadRootId,
+      };
+    }
+    return { kind: "channel", channelId: destination.channelId };
   }
 
-  return { kind: "channel", channelId: destination.channelId };
+  const search =
+    typeof destination.search === "string" && destination.search.length > 0
+      ? destination.search.startsWith("?")
+        ? destination.search.slice(1)
+        : destination.search
+      : undefined;
+  return search
+    ? { kind: "location", pathname: destination.pathname, search }
+    : { kind: "location", pathname: destination.pathname };
 }
 
 export function destinationsEqual(
@@ -73,13 +106,25 @@ export function destinationsEqual(
   if (a == null || b == null) {
     return a == null && b == null;
   }
-  if (a.kind === "home" || b.kind === "home") {
-    return a.kind === "home" && b.kind === "home";
+  if (a.kind !== b.kind) {
+    return false;
   }
-  return (
-    a.channelId === b.channelId &&
-    (a.threadRootId ?? undefined) === (b.threadRootId ?? undefined)
-  );
+  if (a.kind === "home") {
+    return true;
+  }
+  if (a.kind === "channel" && b.kind === "channel") {
+    return (
+      a.channelId === b.channelId &&
+      (a.threadRootId ?? undefined) === (b.threadRootId ?? undefined)
+    );
+  }
+  if (a.kind === "location" && b.kind === "location") {
+    return (
+      a.pathname === b.pathname &&
+      (a.search ?? undefined) === (b.search ?? undefined)
+    );
+  }
+  return false;
 }
 
 function loadCommunityDestinations(storage: Storage): CommunityDestinations {
@@ -179,17 +224,33 @@ export function consumePendingCommunityRestore(communityId: string): boolean {
 }
 
 /**
- * Build a destination snapshot from the current shell route + channel search.
- * Only home and channel views are remembered; other routes leave prior state.
+ * Build a destination snapshot from the current shell route.
+ * Settings and other non-channel views use `location` so they survive restart.
  */
 export function communityDestinationFromRoute(options: {
+  pathname: string;
   selectedView: string;
   selectedChannelId: string | null;
   threadRootId?: string | null;
+  /** TanStack location.search object or query string */
+  search?: unknown;
 }): CommunityDestination | null {
-  if (options.selectedView === "home") {
+  const pathname = options.pathname || "/";
+
+  if (pathname === "/settings" || pathname.startsWith("/settings/")) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname: "/settings", search }
+      : { kind: "location", pathname: "/settings" };
+  }
+
+  if (
+    options.selectedView === "home" &&
+    (pathname === "/" || pathname === "")
+  ) {
     return { kind: "home" };
   }
+
   if (options.selectedView === "channel" && options.selectedChannelId) {
     const threadRootId =
       typeof options.threadRootId === "string" &&
@@ -204,6 +265,27 @@ export function communityDestinationFromRoute(options: {
         }
       : { kind: "channel", channelId: options.selectedChannelId };
   }
+
+  // Agents, workflows, projects, pulse, new message — remember full path.
+  if (
+    options.selectedView !== "home" &&
+    options.selectedView !== "channel" &&
+    isRestorableShellPath(pathname)
+  ) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname, search }
+      : { kind: "location", pathname };
+  }
+
+  // Forum post under channel: /channels/:id/posts/:postId
+  if (pathname.startsWith("/channels/") && pathname.includes("/posts/")) {
+    const search = serializeSearchForDestination(options.search);
+    return search
+      ? { kind: "location", pathname, search }
+      : { kind: "location", pathname };
+  }
+
   return null;
 }
 

@@ -63,7 +63,6 @@ test("persists optional threadRootId on channel destinations", () => {
     threadRootId: "root-event-1",
   });
 
-  // Clearing the thread keeps the channel.
   saveCommunityDestination(
     "alpha",
     { kind: "channel", channelId: "general" },
@@ -72,6 +71,20 @@ test("persists optional threadRootId on channel destinations", () => {
   assert.deepEqual(loadCommunityDestination("alpha", storage), {
     kind: "channel",
     channelId: "general",
+  });
+});
+
+test("persists location destinations for settings and agents", () => {
+  const storage = createMemoryStorage();
+  saveCommunityDestination(
+    "alpha",
+    { kind: "location", pathname: "/settings", search: "section=updates" },
+    storage,
+  );
+  assert.deepEqual(loadCommunityDestination("alpha", storage), {
+    kind: "location",
+    pathname: "/settings",
+    search: "section=updates",
   });
 });
 
@@ -90,6 +103,7 @@ test("ignores malformed stored destinations", () => {
         threadRootId: "",
       },
       emptyChannel: { kind: "channel", channelId: "" },
+      badLocation: { kind: "location", pathname: "relative" },
       unknown: { kind: "settings" },
       primitive: "home",
     }),
@@ -106,6 +120,7 @@ test("ignores malformed stored destinations", () => {
   });
   assert.equal(loadCommunityDestination("emptyThread", storage), null);
   assert.equal(loadCommunityDestination("emptyChannel", storage), null);
+  assert.equal(loadCommunityDestination("badLocation", storage), null);
   assert.equal(loadCommunityDestination("unknown", storage), null);
   assert.equal(loadCommunityDestination("primitive", storage), null);
 });
@@ -149,9 +164,10 @@ test("clears all destinations", () => {
   assert.equal(storage.length, 0);
 });
 
-test("communityDestinationFromRoute maps home, channel, and thread", () => {
+test("communityDestinationFromRoute maps home, channel, settings, agents", () => {
   assert.deepEqual(
     communityDestinationFromRoute({
+      pathname: "/",
       selectedView: "home",
       selectedChannelId: null,
     }),
@@ -159,18 +175,29 @@ test("communityDestinationFromRoute maps home, channel, and thread", () => {
   );
   assert.deepEqual(
     communityDestinationFromRoute({
+      pathname: "/channels/c1",
       selectedView: "channel",
       selectedChannelId: "c1",
       threadRootId: "t1",
     }),
     { kind: "channel", channelId: "c1", threadRootId: "t1" },
   );
-  assert.equal(
+  assert.deepEqual(
     communityDestinationFromRoute({
+      pathname: "/settings",
+      selectedView: "home",
+      selectedChannelId: null,
+      search: { section: "updates" },
+    }),
+    { kind: "location", pathname: "/settings", search: "section=updates" },
+  );
+  assert.deepEqual(
+    communityDestinationFromRoute({
+      pathname: "/agents",
       selectedView: "agents",
       selectedChannelId: null,
     }),
-    null,
+    { kind: "location", pathname: "/agents" },
   );
 });
 
@@ -183,11 +210,8 @@ test("threadRootIdFromLocationSearch prefers thread over threadRootId", () => {
   assert.equal(threadRootIdFromLocationSearch({}), undefined);
 });
 
-test("destinationsEqual compares kind, channel, and thread", () => {
-  assert.equal(
-    destinationsEqual({ kind: "home" }, { kind: "home" }),
-    true,
-  );
+test("destinationsEqual compares kind, channel, thread, and location", () => {
+  assert.equal(destinationsEqual({ kind: "home" }, { kind: "home" }), true);
   assert.equal(
     destinationsEqual(
       { kind: "channel", channelId: "c", threadRootId: "t" },
@@ -201,5 +225,12 @@ test("destinationsEqual compares kind, channel, and thread", () => {
       { kind: "channel", channelId: "c", threadRootId: "t" },
     ),
     false,
+  );
+  assert.equal(
+    destinationsEqual(
+      { kind: "location", pathname: "/agents" },
+      { kind: "location", pathname: "/agents" },
+    ),
+    true,
   );
 });

@@ -45,10 +45,13 @@ import { useCommunityInit } from "@/features/communities/useCommunityInit";
 import { useNestNotifications } from "@/features/communities/useNestNotifications";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
+  communityDestinationFromRoute,
   loadCommunityDestination,
   markPendingCommunityRestore,
   saveCommunityDestination,
+  threadRootIdFromLocationSearch,
 } from "@/features/communities/communityNavigationStorage";
+import { locationDestinationHref } from "@/features/communities/communitySessionRestore";
 import {
   onAddCommunityPrefillAvailable,
   requestAddCommunityPrefill,
@@ -350,30 +353,19 @@ function CommunityApp({
       const activeCommunityId = activeCommunity?.id;
       if (targetCommunityId === activeCommunityId) return;
       if (activeCommunityId) {
-        const route = deriveShellRoute(router.state.location.pathname);
-        const search = router.state.location.search as {
-          thread?: unknown;
-          threadRootId?: unknown;
-        };
-        const threadRootId =
-          typeof search.thread === "string" && search.thread.length > 0
-            ? search.thread
-            : typeof search.threadRootId === "string" &&
-                search.threadRootId.length > 0
-              ? search.threadRootId
-              : undefined;
-        saveCommunityDestination(
-          activeCommunityId,
-          route.selectedView === "channel" && route.selectedChannelId
-            ? threadRootId
-              ? {
-                  kind: "channel",
-                  channelId: route.selectedChannelId,
-                  threadRootId,
-                }
-              : { kind: "channel", channelId: route.selectedChannelId }
-            : { kind: "home" },
-        );
+        const pathname = router.state.location.pathname;
+        const search = router.state.location.search;
+        const route = deriveShellRoute(pathname);
+        const snapshot = communityDestinationFromRoute({
+          pathname,
+          selectedView: route.selectedView,
+          selectedChannelId: route.selectedChannelId,
+          threadRootId: threadRootIdFromLocationSearch(search),
+          search,
+        });
+        if (snapshot) {
+          saveCommunityDestination(activeCommunityId, snapshot);
+        }
         await router.navigate({ to: "/", replace: true });
         markPendingCommunityRestore(targetCommunityId);
         const destination = loadCommunityDestination(targetCommunityId);
@@ -382,6 +374,10 @@ function CommunityApp({
             destination.channelId,
             router.history,
             { threadRootId: destination.threadRootId },
+          );
+        } else if (destination?.kind === "location") {
+          router.history.replace(
+            locationDestinationHref(destination.pathname, destination.search),
           );
         }
       }

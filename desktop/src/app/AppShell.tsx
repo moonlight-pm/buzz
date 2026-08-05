@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Outlet, useLocation } from "@tanstack/react-router";
+import { Outlet, useLocation, useRouter } from "@tanstack/react-router";
 import { deriveShellRoute, markAllReadSources } from "@/app/AppShell.helpers";
 import { useTerminalContext } from "@/app/useTerminalContext";
 import { AppShellProvider } from "@/app/AppShellContext";
@@ -81,6 +81,12 @@ import {
   saveCommunityDestination,
   threadRootIdFromLocationSearch,
 } from "@/features/communities/communityNavigationStorage";
+import {
+  isChannelRestorable,
+  locationDestinationHref,
+  planCommunitySessionRestore,
+} from "@/features/communities/communitySessionRestore";
+import { getEventById } from "@/shared/api/tauri";
 import { useAddCommunityDialogState } from "@/features/communities/addCommunityPrefill";
 import { useApplyTemplate } from "@/features/channel-templates/useApplyTemplate";
 import { relayClient } from "@/shared/api/relayClient";
@@ -133,6 +139,7 @@ export function AppShell() {
   const [isSendFeedbackOpen, setIsSendFeedbackOpen] = React.useState(false);
   const mainInsetRef = React.useRef<HTMLElement>(null);
   const location = useLocation();
+  const router = useRouter();
   const queryClient = useQueryClient();
   useManagedAgentRuntimeReconciliation(communitiesHook.communities); // sync storage snapshot
   const {
@@ -160,6 +167,7 @@ export function AppShell() {
     communities: communitiesHook,
     goHome,
     locationSearch: location.search,
+    pathname: location.pathname,
     selectedChannelId,
     selectedView,
   });
@@ -263,7 +271,8 @@ export function AppShell() {
       ),
     [huddleBackingChannelIds, memberChannels, revealedHuddleChannelIds],
   );
-  const hasRestoredCommunityDestinationRef = React.useRef(false);
+  // Re-arm restore whenever the active community changes (cold start + switch).
+  const lastRestoredCommunityIdRef = React.useRef<string | null>(null);
   // Blocks continuous destination writes until session restore finishes so a
   // cold-boot Home frame cannot clobber the remembered channel/thread.
   const [destinationPersistReady, setDestinationPersistReady] =
@@ -271,71 +280,109 @@ export function AppShell() {
   React.useEffect(() => {
     const activeCommunityId = communitiesHook.activeCommunity?.id;
     if (
-      hasRestoredCommunityDestinationRef.current ||
       !channelsQuery.isSuccess ||
       channelsQuery.dataUpdatedAt === 0 ||
       !activeCommunityId
     ) {
       return;
     }
-    hasRestoredCommunityDestinationRef.current = true;
+    if (lastRestoredCommunityIdRef.current === activeCommunityId) {
+      return;
+    }
+    lastRestoredCommunityIdRef.current = activeCommunityId;
+    setDestinationPersistReady(false);
 
+    let cancelled = false;
     const markPersistReady = () => {
-      setDestinationPersistReady(true);
+      if (!cancelled) {
+        setDestinationPersistReady(true);
+      }
     };
 
     const pendingRestore = consumePendingCommunityRestore(activeCommunityId);
-    // Community-switch restore always runs when pending.
-    // Cold start restores when the shell is still on the default Home route
-    // (hash history boots at `/`). Deep links / explicit non-home routes win.
-    if (!pendingRestore && selectedView !== "home") {
-      markPersistReady();
-      return;
-    }
-
     const destination = loadCommunityDestination(activeCommunityId);
-    if (!destination || destination.kind === "home") {
-      markPersistReady();
-      return;
-    }
+    const channelAvailable =
+      destination?.kind === "channel"
+        ? isChannelRestorable(destination.channelId, memberChannels)
+        : false;
 
-    const channelIsAvailable = sidebarChannels.some(
-      (channel) => channel.id === destination.channelId,
-    );
-    if (!channelIsAvailable) {
-      saveCommunityDestination(activeCommunityId, { kind: "home" });
-      if (pendingRestore) {
-        void goHome({ replace: true }).finally(markPersistReady);
+    const plan = planCommunitySessionRestore({
+      pendingRestore,
+      selectedView,
+      pathname: location.pathname,
+      destination,
+      channelAvailable,
+    });
+
+    const run = async () => {
+      if (plan.action === "none") {
+        markPersistReady();
         return;
       }
-      markPersistReady();
-      return;
-    }
 
-    // The normal switch path writes the remembered channel into the hash before
-    // the target community mounts, so no intermediate Inbox frame is painted.
-    // Cold start and older transition callers may still sit on Home — restore.
-    if (selectedView === "home") {
-      void goChannel(destination.channelId, {
+      if (plan.action === "home") {
+        if (plan.clearSaved) {
+          saveCommunityDestination(activeCommunityId, { kind: "home" });
+        }
+        if (pendingRestore || selectedView !== "home") {
+          await goHome({ replace: true });
+        }
+        markPersistReady();
+        return;
+      }
+
+      if (plan.action === "location") {
+        const href = locationDestinationHref(plan.pathname, plan.search);
+        router.history.replace(href);
+        markPersistReady();
+        return;
+      }
+
+      // plan.action === "channel" — probe thread so deleted heads skip the panel.
+      let threadRootId = plan.threadRootId;
+      if (threadRootId) {
+        try {
+          await getEventById(threadRootId);
+        } catch {
+          threadRootId = undefined;
+          // Drop the stale thread from storage; keep the channel.
+          saveCommunityDestination(activeCommunityId, {
+            kind: "channel",
+            channelId: plan.channelId,
+          });
+        }
+      }
+      if (cancelled) {
+        return;
+      }
+      await goChannel(plan.channelId, {
         replace: true,
-        thread: destination.threadRootId,
-      }).finally(markPersistReady);
-      return;
-    }
+        thread: threadRootId,
+      });
+      markPersistReady();
+    };
 
-    markPersistReady();
+    void run().catch((error) => {
+      console.error("Failed to restore community session destination:", error);
+      markPersistReady();
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     channelsQuery.dataUpdatedAt,
     channelsQuery.isSuccess,
     communitiesHook.activeCommunity?.id,
     goChannel,
     goHome,
+    location.pathname,
+    memberChannels,
+    router.history,
     selectedView,
-    sidebarChannels,
   ]);
 
-  // Continuously remember the active community's channel + open thread so a
-  // full app restart can reopen the same place (not only community switches).
+  // Continuously remember shell location (channel + thread, settings, agents…).
   React.useEffect(() => {
     if (!destinationPersistReady) {
       return;
@@ -345,9 +392,11 @@ export function AppShell() {
       return;
     }
     const destination = communityDestinationFromRoute({
+      pathname: location.pathname,
       selectedView,
       selectedChannelId,
       threadRootId: threadRootIdFromLocationSearch(location.search),
+      search: location.search,
     });
     if (destination) {
       saveCommunityDestination(activeCommunityId, destination);
@@ -355,6 +404,7 @@ export function AppShell() {
   }, [
     communitiesHook.activeCommunity?.id,
     destinationPersistReady,
+    location.pathname,
     location.search,
     selectedChannelId,
     selectedView,
