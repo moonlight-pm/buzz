@@ -152,6 +152,21 @@ rm -f "$OUT"/Buzz_* "$OUT"/BUILD_INFO.txt "$OUT"/latest.json 2>/dev/null || true
 # desktop package deps (tauri CLI)
 (cd desktop && [[ -d node_modules ]] || pnpm install)
 
+# Prove codesign can use the Developer ID key before a long tauri build.
+# LaunchAgent SessionCreate isolation used to cause errSecInternalComponent.
+echo "=== codesign keychain probe ==="
+PROBE="$(mktemp -t moonlight-codesign-probe)"
+echo probe >"$PROBE"
+if ! codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$PROBE" 2>/tmp/moonlight-codesign-probe.err; then
+  echo "codesign probe failed (keychain not usable from this runner session):" >&2
+  cat /tmp/moonlight-codesign-probe.err >&2
+  echo "Hint: runner LaunchAgent must run in the user Aqua session (no SessionCreate)." >&2
+  rm -f "$PROBE"
+  exit 1
+fi
+rm -f "$PROBE"
+echo "codesign probe OK"
+
 echo "=== Moonlight desktop build v${VERSION} @ $(git rev-parse --short HEAD) ==="
 set +e
 (cd desktop && pnpm tauri build \
@@ -165,6 +180,11 @@ APP="$ROOT/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Bu
 if [[ ! -d "$APP" ]]; then
   echo "Build failed (rc=$BUILD_RC) and Buzz.app missing" >&2
   exit "${BUILD_RC:-1}"
+fi
+if [[ "$BUILD_RC" -ne 0 ]]; then
+  # Tauri may leave a partial .app after codesign failure — do not notarize it.
+  echo "tauri build failed (rc=$BUILD_RC); refusing to package partial app" >&2
+  exit "$BUILD_RC"
 fi
 
 # App should already be signed+notarized by Tauri when APPLE_* env is set
