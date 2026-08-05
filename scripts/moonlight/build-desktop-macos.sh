@@ -116,7 +116,20 @@ if [[ -x ./scripts/ensure-mesh-native-runtime.sh ]]; then
   MESH_LLM_NATIVE_RUNTIME_CACHE_DIR="$(./scripts/ensure-mesh-native-runtime.sh)"
 fi
 
-# Real sidecars (not stubs)
+# Fresh runner workspaces have no node_modules / release bins.
+echo "=== pnpm install ==="
+pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+
+echo "=== cargo build release sidecars ==="
+cargo build --release \
+  -p buzz-acp \
+  -p buzz-agent \
+  -p buzz-backend-kubernetes \
+  -p buzz-dev-mcp \
+  -p git-credential-nostr \
+  -p buzz-cli
+
+# Real sidecars (not stubs) into desktop/src-tauri/binaries/
 ./scripts/bundle-sidecars.sh
 
 if [[ -n "$VERSION" ]]; then
@@ -135,6 +148,9 @@ mkdir -p "$OUT"
 rm -f "$OUT"/Buzz_* "$OUT"/BUILD_INFO.txt "$OUT"/latest.json 2>/dev/null || true
 
 (cd desktop && node scripts/build-release-config.mjs)
+
+# desktop package deps (tauri CLI)
+(cd desktop && [[ -d node_modules ]] || pnpm install)
 
 echo "=== Moonlight desktop build v${VERSION} @ $(git rev-parse --short HEAD) ==="
 set +e
