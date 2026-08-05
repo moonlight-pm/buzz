@@ -107,6 +107,8 @@ type MessageTimelineProps = {
     emoji: string,
     remove: boolean,
   ) => Promise<void>;
+  /** Thread head currently open in the side panel, if any. */
+  openThreadHeadId?: string | null;
   /** The message ID of the currently active find-in-channel match. */
   searchActiveMessageId?: string | null;
   /** Set of message IDs that match the current find-in-channel query. */
@@ -197,6 +199,7 @@ const MessageTimelineBase = React.forwardRef<
     isSendingVideoReviewComment = false,
     onSendVideoReviewComment,
     onToggleReaction,
+    openThreadHeadId = null,
     unfollowThreadById,
     scrollContainerRef: externalScrollRef,
     searchActiveMessageId = null,
@@ -667,6 +670,7 @@ const MessageTimelineBase = React.forwardRef<
       onSendVideoReviewComment={onSendVideoReviewComment}
       onStartReached={loadOlderViaVirtualizer}
       onToggleReaction={onToggleReaction}
+      openThreadHeadId={openThreadHeadId}
       onVirtualizerApiChange={setTimelineVirtualizerApi}
       onVirtualizerRangeChanged={handleVirtualizerRangeChanged}
       onVirtualizerScrollerChange={setVirtualizerScrollParent}
