@@ -190,13 +190,22 @@ export function useAppNavigation() {
             ...(options?.messageId
               ? {
                   messageId: options.messageId,
-                  threadRootId: options.threadRootId ?? undefined,
+                  // Deep-link scroll target; panel open state still uses `thread`.
+                  ...(options.threadRootId
+                    ? { threadRootId: options.threadRootId }
+                    : {}),
                 }
               : {}),
             ...(options?.agentSession
               ? { agentSession: options.agentSession }
               : {}),
-            ...(options?.thread ? { thread: options.thread } : {}),
+            // Prefer explicit `thread`; fall back to threadRootId so callers can
+            // reopen the side panel without a messageId (session restore).
+            ...(options?.thread
+              ? { thread: options.thread }
+              : options?.threadRootId
+                ? { thread: options.threadRootId }
+                : {}),
             ...(options?.autoSend ? { autoSend: options.autoSend } : {}),
           },
         },

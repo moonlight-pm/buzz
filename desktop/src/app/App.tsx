@@ -351,10 +351,27 @@ function CommunityApp({
       if (targetCommunityId === activeCommunityId) return;
       if (activeCommunityId) {
         const route = deriveShellRoute(router.state.location.pathname);
+        const search = router.state.location.search as {
+          thread?: unknown;
+          threadRootId?: unknown;
+        };
+        const threadRootId =
+          typeof search.thread === "string" && search.thread.length > 0
+            ? search.thread
+            : typeof search.threadRootId === "string" &&
+                search.threadRootId.length > 0
+              ? search.threadRootId
+              : undefined;
         saveCommunityDestination(
           activeCommunityId,
           route.selectedView === "channel" && route.selectedChannelId
-            ? { kind: "channel", channelId: route.selectedChannelId }
+            ? threadRootId
+              ? {
+                  kind: "channel",
+                  channelId: route.selectedChannelId,
+                  threadRootId,
+                }
+              : { kind: "channel", channelId: route.selectedChannelId }
             : { kind: "home" },
         );
         await router.navigate({ to: "/", replace: true });
@@ -364,6 +381,7 @@ function CommunityApp({
           replaceCommunityDestinationRoute(
             destination.channelId,
             router.history,
+            { threadRootId: destination.threadRootId },
           );
         }
       }

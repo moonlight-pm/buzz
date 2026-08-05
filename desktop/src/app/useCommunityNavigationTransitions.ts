@@ -8,9 +8,11 @@ import {
   runCommunityViewTransition,
 } from "@/app/communityViewTransition";
 import {
+  communityDestinationFromRoute,
   loadCommunityDestination,
   markPendingCommunityRestore,
   saveCommunityDestination,
+  threadRootIdFromLocationSearch,
 } from "@/features/communities/communityNavigationStorage";
 import type { useCommunities } from "@/features/communities/useCommunities";
 
@@ -23,23 +25,35 @@ export function useCommunityNavigationTransitions({
   goHome,
   selectedChannelId,
   selectedView,
+  locationSearch,
 }: {
   communities: Communities;
   goHome: GoHome;
   selectedChannelId: ShellRoute["selectedChannelId"];
   selectedView: ShellRoute["selectedView"];
+  locationSearch?: unknown;
 }) {
   const router = useRouter();
   const saveActiveDestination = React.useCallback(() => {
     const activeCommunityId = communities.activeCommunity?.id;
     if (!activeCommunityId) return;
-    saveCommunityDestination(
-      activeCommunityId,
-      selectedView === "channel" && selectedChannelId
-        ? { kind: "channel", channelId: selectedChannelId }
-        : { kind: "home" },
-    );
-  }, [communities.activeCommunity?.id, selectedChannelId, selectedView]);
+    const destination = communityDestinationFromRoute({
+      selectedView,
+      selectedChannelId,
+      threadRootId: threadRootIdFromLocationSearch(
+        locationSearch ?? router.state.location.search,
+      ),
+    });
+    if (destination) {
+      saveCommunityDestination(activeCommunityId, destination);
+    }
+  }, [
+    communities.activeCommunity?.id,
+    locationSearch,
+    router.state.location.search,
+    selectedChannelId,
+    selectedView,
+  ]);
 
   // Home is a teardown barrier: the outgoing channel must unmount before the
   // relay changes, or its read effect can advance markers on the wrong relay.
@@ -61,6 +75,7 @@ export function useCommunityNavigationTransitions({
           replaceCommunityDestinationRoute(
             destination.channelId,
             router.history,
+            { threadRootId: destination.threadRootId },
           );
         }
         communities.switchCommunity(id);
@@ -89,6 +104,7 @@ export function useCommunityNavigationTransitions({
           replaceCommunityDestinationRoute(
             destination.channelId,
             router.history,
+            { threadRootId: destination.threadRootId },
           );
         }
         communities.removeCommunity(id);

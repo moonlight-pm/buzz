@@ -75,9 +75,11 @@ import { useChannelMutes } from "@/features/sidebar/lib/useChannelMutes";
 import { useChannelStars } from "@/features/sidebar/lib/useChannelStars";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
+  communityDestinationFromRoute,
   consumePendingCommunityRestore,
   loadCommunityDestination,
   saveCommunityDestination,
+  threadRootIdFromLocationSearch,
 } from "@/features/communities/communityNavigationStorage";
 import { useAddCommunityDialogState } from "@/features/communities/addCommunityPrefill";
 import { useApplyTemplate } from "@/features/channel-templates/useApplyTemplate";
@@ -157,6 +159,7 @@ export function AppShell() {
   } = useCommunityNavigationTransitions({
     communities: communitiesHook,
     goHome,
+    locationSearch: location.search,
     selectedChannelId,
     selectedView,
   });
@@ -261,6 +264,10 @@ export function AppShell() {
     [huddleBackingChannelIds, memberChannels, revealedHuddleChannelIds],
   );
   const hasRestoredCommunityDestinationRef = React.useRef(false);
+  // Blocks continuous destination writes until session restore finishes so a
+  // cold-boot Home frame cannot clobber the remembered channel/thread.
+  const [destinationPersistReady, setDestinationPersistReady] =
+    React.useState(false);
   React.useEffect(() => {
     const activeCommunityId = communitiesHook.activeCommunity?.id;
     if (
@@ -273,14 +280,22 @@ export function AppShell() {
     }
     hasRestoredCommunityDestinationRef.current = true;
 
-    // Restoration belongs to an explicit community transition. Cold boot and
-    // reconnect remounts must preserve the route the user explicitly opened.
-    if (!consumePendingCommunityRestore(activeCommunityId)) {
+    const markPersistReady = () => {
+      setDestinationPersistReady(true);
+    };
+
+    const pendingRestore = consumePendingCommunityRestore(activeCommunityId);
+    // Community-switch restore always runs when pending.
+    // Cold start restores when the shell is still on the default Home route
+    // (hash history boots at `/`). Deep links / explicit non-home routes win.
+    if (!pendingRestore && selectedView !== "home") {
+      markPersistReady();
       return;
     }
 
     const destination = loadCommunityDestination(activeCommunityId);
     if (!destination || destination.kind === "home") {
+      markPersistReady();
       return;
     }
 
@@ -289,16 +304,26 @@ export function AppShell() {
     );
     if (!channelIsAvailable) {
       saveCommunityDestination(activeCommunityId, { kind: "home" });
-      void goHome({ replace: true });
+      if (pendingRestore) {
+        void goHome({ replace: true }).finally(markPersistReady);
+        return;
+      }
+      markPersistReady();
       return;
     }
 
     // The normal switch path writes the remembered channel into the hash before
     // the target community mounts, so no intermediate Inbox frame is painted.
-    // Older transition callers may still arrive at neutral Home; repair those.
+    // Cold start and older transition callers may still sit on Home — restore.
     if (selectedView === "home") {
-      void goChannel(destination.channelId, { replace: true });
+      void goChannel(destination.channelId, {
+        replace: true,
+        thread: destination.threadRootId,
+      }).finally(markPersistReady);
+      return;
     }
+
+    markPersistReady();
   }, [
     channelsQuery.dataUpdatedAt,
     channelsQuery.isSuccess,
@@ -307,6 +332,32 @@ export function AppShell() {
     goHome,
     selectedView,
     sidebarChannels,
+  ]);
+
+  // Continuously remember the active community's channel + open thread so a
+  // full app restart can reopen the same place (not only community switches).
+  React.useEffect(() => {
+    if (!destinationPersistReady) {
+      return;
+    }
+    const activeCommunityId = communitiesHook.activeCommunity?.id;
+    if (!activeCommunityId) {
+      return;
+    }
+    const destination = communityDestinationFromRoute({
+      selectedView,
+      selectedChannelId,
+      threadRootId: threadRootIdFromLocationSearch(location.search),
+    });
+    if (destination) {
+      saveCommunityDestination(activeCommunityId, destination);
+    }
+  }, [
+    communitiesHook.activeCommunity?.id,
+    destinationPersistReady,
+    location.search,
+    selectedChannelId,
+    selectedView,
   ]);
   const { activeChannel, terminalContext } = useTerminalContext({
     channelId: selectedChannelId,

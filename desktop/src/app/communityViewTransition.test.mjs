@@ -33,6 +33,18 @@ test("replaceCommunityDestinationRoute uses router history and encodes the chann
   assert.deepEqual(replacements, ["/channels/channel%2Fwith%20spaces"]);
 });
 
+test("replaceCommunityDestinationRoute includes open-thread search when provided", () => {
+  const replacements = [];
+  replaceCommunityDestinationRoute(
+    "general",
+    { replace: (href) => replacements.push(href) },
+    { threadRootId: "event/with spaces" },
+  );
+  assert.deepEqual(replacements, [
+    "/channels/general?thread=event%2Fwith%20spaces",
+  ]);
+});
+
 test("unsupported browsers execute the update and contain rejection", async () => {
   installBrowser(undefined);
   const expected = new Error("navigation failed");
