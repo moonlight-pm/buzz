@@ -1,6 +1,11 @@
+import * as React from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useUpdaterContext } from "./hooks/UpdaterProvider";
+
+import { formatMoonlightAppVersion } from "@/shared/lib/moonlightRelease";
 import { Button } from "@/shared/ui/button";
+
+import { useUpdaterContext } from "./hooks/UpdaterProvider";
 import {
   SettingsOptionGroup,
   SettingsOptionRow,
@@ -8,6 +13,15 @@ import {
 import { SettingsSectionHeader } from "./ui/SettingsSectionHeader";
 export function UpdateChecker() {
   const { status, checkForUpdate, installAndRelaunch } = useUpdaterContext();
+  const [appVersion, setAppVersion] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    void getVersion().then(setAppVersion);
+  }, []);
+
+  const displayVersion = appVersion
+    ? formatMoonlightAppVersion(appVersion)
+    : null;
 
   return (
     <section className="min-w-0" data-testid="settings-updates">
@@ -53,7 +67,8 @@ export function UpdateChecker() {
                 className="text-sm font-normal text-muted-foreground/70"
                 data-settings-subcopy
               >
-                You're on the latest version.
+                You're on the latest version
+                {displayVersion ? ` (${displayVersion})` : ""}.
               </p>
             </div>
             <Button variant="outline" size="sm" onClick={checkForUpdate}>
