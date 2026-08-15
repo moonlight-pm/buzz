@@ -14,6 +14,7 @@ import {
 } from "@/shared/features/useFeatureEnabled";
 import { topChromeBackdrop } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
+import { formatMoonlightAppVersion } from "@/shared/lib/moonlightRelease";
 import {
   Sidebar,
   SidebarContent,
@@ -306,7 +307,7 @@ export function SettingsView({
               data-buzz-sidebar-secondary
               data-testid="settings-version"
             >
-              v{appVersion}
+              v{formatMoonlightAppVersion(appVersion)}
             </p>
           ) : null}
         </SidebarFooter>

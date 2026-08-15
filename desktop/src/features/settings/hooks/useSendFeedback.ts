@@ -9,11 +9,12 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent, uploadMediaBytes } from "@/shared/api/tauri";
 import { pickAndUploadImage } from "@/shared/api/tauriMedia";
 import { KIND_PRODUCT_FEEDBACK } from "@/shared/constants/kinds";
+import { formatMoonlightAppVersion } from "@/shared/lib/moonlightRelease";
 
 async function collectDiagnostics(): Promise<string> {
   let appVersion = "unknown";
   try {
-    appVersion = await getVersion();
+    appVersion = formatMoonlightAppVersion(await getVersion());
   } catch {
     // Non-fatal — fall through with "unknown".
   }
